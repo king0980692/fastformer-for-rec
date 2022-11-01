@@ -1,0 +1,8 @@
+data
+raw_data
+saved_models
+speedymind_ckpts
+__pycache__
+*.bin
+*.txt
+*.zip

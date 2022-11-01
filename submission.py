@@ -63,6 +63,9 @@ def prediction(model, args, device, category_dict, subcategory_dict):
             for id, user_vec, news_vec in zip(
                     impids, user_vecs, candidate_vec):
 
+                if args.use_moe:
+                    news_vecs, _ = model.fc(news_vecs)
+
                 score = np.dot(
                     news_vec, user_vec
                 )

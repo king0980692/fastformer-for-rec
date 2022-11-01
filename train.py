@@ -316,6 +316,9 @@ def test(model, args, device, category_dict, subcategory_dict):
             for index, user_vec, news_vec, label, his_len in zip(
                     range(len(labels)), user_vecs, news_vecs, labels, his_lens):
 
+                if args.use_moe:
+                    news_vecs, _ = model.fc(news_vecs)
+
                 if label.mean() == 0 or label.mean() == 1:
                     continue
                 score = np.dot(

@@ -3,6 +3,7 @@ from torch import nn
 from transformers import BertConfig
 from utility.utils import MODEL_CLASSES
 from models.fast import Fastformer
+from models.moe import MoE
 from transformers.modeling_bert import BertModel
 ffconfig = BertConfig.from_json_file('models/ffconfig.json')
 
@@ -28,6 +29,23 @@ class AttentionPooling(nn.Module):
         x = torch.bmm(x.permute(0, 2, 1), alpha)
         x = torch.reshape(x, (bz, -1))  # (bz, 400)
         return x
+
+
+class MoEFFN(nn.Module):
+    def __init__(self, config):
+        super(MoEFFN, self).__init__()
+        self.MoELayer = MoE(input_size=config.hidden_size, output_size=config.hidden_size, hidden_size=config.expert_hidden_size, num_experts=config.num_expert, k=config.num_selected_expert)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(self, attention_output):
+        B, L, D = attention_output.size()
+        attention_output = attention_output.view(-1, D)
+        hidden_states, _ = self.MoELayer(attention_output)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states + attention_output)
+        hidden_states = hidden_states.view(B, L, D)
+        return hidden_states
 
 
 class TextEncoder(nn.Module):
@@ -71,8 +89,8 @@ class TextEncoder(nn.Module):
             sent_vec = self.sent_att(sent_vec, text_attmask)
         else:
             sent_vec = torch.mean(sent_vec, dim=1)
-
         news_vec = self.fc(sent_vec)
+       
         return news_vec
 
     def forward(self, inputs):
@@ -145,7 +163,7 @@ class MLNR(nn.Module):
         self.args = args
         self.news_encoder = TextEncoder(args)
         self.user_encoder = UserEncoder(args, self.news_encoder if self.args.title_share_encoder else None)
-
+        self.fc = MoEFFN(ffconfig)
         self.loss_fn = nn.CrossEntropyLoss()
 
     def forward(self,
@@ -177,6 +195,11 @@ class MLNR(nn.Module):
         candidate_vec = news_vecs.index_select(0, reshape_candidate)
         candidate_vec = candidate_vec.view(candidate_inx.size(0), candidate_inx.size(1), -1)  # B N D
 
+        moe_loss = 0
+        if self.args.use_moe:
+            print(self.fc(candidate_vec))
+            candidate_vec, moe_loss = self.fc(candidate_vec)
+        
         reshape_hist = hist_sequence.view(-1, )
         log_vec = news_vecs.index_select(0, reshape_hist)
         log_vec = log_vec.view(hist_sequence.size(0), hist_sequence.size(1), -1)  # batch_size, log_length, news_dim
@@ -187,7 +210,7 @@ class MLNR(nn.Module):
 
         score = torch.bmm(candidate_vec, user_vec).squeeze(-1)
         if compute_loss:
-            loss = self.loss_fn(score, labels)
+            loss = self.loss_fn(score, labels) + moe_loss
             return loss, score
         else:
             return score
