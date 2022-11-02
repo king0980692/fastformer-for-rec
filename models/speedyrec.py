@@ -32,20 +32,23 @@ class AttentionPooling(nn.Module):
 
 
 class MoEFFN(nn.Module):
-    def __init__(self, config):
+    def __init__(self, input_size, output_size, hidden_size, num_expert, k, layer_norm_eps, hidden_dropout_prob):
         super(MoEFFN, self).__init__()
-        self.MoELayer = MoE(input_size=config.hidden_size, output_size=config.hidden_size, hidden_size=config.expert_hidden_size, num_experts=config.num_expert, k=config.num_selected_expert)
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.MoELayer = MoE(input_size, output_size, hidden_size, num_expert, k)
+        self.LayerNorm = nn.LayerNorm(output_size, eps=layer_norm_eps)
+        self.dropout = nn.Dropout(hidden_dropout_prob)
 
     def forward(self, attention_output):
-        B, L, D = attention_output.size()
-        attention_output = attention_output.view(-1, D)
-        hidden_states, _ = self.MoELayer(attention_output)
+        len_size = attention_output.size()
+        if len(len_size) == 3:
+            B, L, D = attention_output.size()
+            attention_output = attention_output.view(-1, D)
+        hidden_states, moe_loss = self.MoELayer(attention_output)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + attention_output)
-        hidden_states = hidden_states.view(B, L, D)
-        return hidden_states
+        # hidden_states = self.LayerNorm(hidden_states + attention_output)
+        if len(len_size) == 3:
+            hidden_states = hidden_states.view(B, L, D)
+        return hidden_states, moe_loss
 
 
 class TextEncoder(nn.Module):
@@ -69,6 +72,14 @@ class TextEncoder(nn.Module):
             self.config.hidden_size,
             args.news_dim)
 
+        self.moe_layer = MoEFFN(input_size=self.config.hidden_size, 
+                                output_size=args.news_dim, 
+                                hidden_size=ffconfig.expert_hidden_size, 
+                                num_expert=ffconfig.num_expert, 
+                                k=ffconfig.num_selected_expert,
+                                layer_norm_eps=ffconfig.layer_norm_eps,
+                                hidden_dropout_prob=ffconfig.hidden_dropout_prob)
+
         if 'abstract' in self.args.news_attributes:
             self.text_att = AttentionPooling(
                 args.news_dim, args.news_dim,
@@ -89,7 +100,11 @@ class TextEncoder(nn.Module):
             sent_vec = self.sent_att(sent_vec, text_attmask)
         else:
             sent_vec = torch.mean(sent_vec, dim=1)
-        news_vec = self.fc(sent_vec)
+        
+        if self.args.use_moe:
+            news_vec, _ = self.moe_layer(sent_vec)
+        else:
+            news_vec = self.fc(sent_vec)
        
         return news_vec
 
@@ -163,7 +178,6 @@ class MLNR(nn.Module):
         self.args = args
         self.news_encoder = TextEncoder(args)
         self.user_encoder = UserEncoder(args, self.news_encoder if self.args.title_share_encoder else None)
-        self.fc = MoEFFN(ffconfig)
         self.loss_fn = nn.CrossEntropyLoss()
 
     def forward(self,
@@ -195,11 +209,6 @@ class MLNR(nn.Module):
         candidate_vec = news_vecs.index_select(0, reshape_candidate)
         candidate_vec = candidate_vec.view(candidate_inx.size(0), candidate_inx.size(1), -1)  # B N D
 
-        moe_loss = 0
-        if self.args.use_moe:
-            print(self.fc(candidate_vec))
-            candidate_vec, moe_loss = self.fc(candidate_vec)
-        
         reshape_hist = hist_sequence.view(-1, )
         log_vec = news_vecs.index_select(0, reshape_hist)
         log_vec = log_vec.view(hist_sequence.size(0), hist_sequence.size(1), -1)  # batch_size, log_length, news_dim
@@ -210,7 +219,7 @@ class MLNR(nn.Module):
 
         score = torch.bmm(candidate_vec, user_vec).squeeze(-1)
         if compute_loss:
-            loss = self.loss_fn(score, labels) + moe_loss
+            loss = self.loss_fn(score, labels)
             return loss, score
         else:
             return score

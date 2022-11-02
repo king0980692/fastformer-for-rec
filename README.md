@@ -14,7 +14,7 @@ After cloning this repo, you can conduct experiments with following commands:
 ## Requirements
 ```bash
 Python==3.6
-transformers==4.6.0
+transformers==3.4.0
 tensforlow==1.15
 scikit-learn==0.23
 ```
