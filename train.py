@@ -67,6 +67,7 @@ def train(local_rank,
         barrier = get_barrier(dist_training)
 
         news_info, news_combined = get_news_feature(args, mode='train')
+        import IPython;IPython.embed(colors='linux');exit(1) 
         with only_on_main_process(local_rank, barrier) as need:
             if need:
                 data_paths = []

@@ -1,0 +1,21 @@
+python3 train.py \
+   --pretreained_model others \
+   --pretrained_model_path /tmp2/lychang/all-MiniLM-L6-v2  \
+   --root_data_dir ../Largedata/speedy_data/ \
+   --enable_gpu 0 \
+   --num_worker 16 \
+   --num_hidden_layers 8 \
+   --world_size 1 \
+   --lr 1e-4 \
+   --pretrain_lr 8e-6 \
+   --warmup False \
+   --schedule_step 240000 \
+   --warmup_step 1000 \
+   --batch_size 20 \
+   --npratio 4 \
+   --beta_for_cache 0.002 \
+   --max_step_in_cache 2 \
+   --savename speedyrec_mind \
+   --epochs 10 \
+   --news_dim 256
+
